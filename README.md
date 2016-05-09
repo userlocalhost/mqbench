@@ -1,5 +1,11 @@
 ## What is this?
-This is a benchmark script to measure trend of pub/sub processing throughput at AMQP and STOMP server environment.
+This is a benchmark tool to measure trend of pub/sub processing throughput at AMQP,STOMP and Kafka server.
+
+## Installation
+You can install mqbench with RubyGems:
+```
+gem install mqbench
+```
 
 ## Usage
 ```
