@@ -1,0 +1,12 @@
+#!/usr/bin/env ruby
+
+require 'mqbench'
+
+opts = MQBench::Options.new(ARGV)
+unless opts.is_valid?
+  opts.show_usage
+  puts "[warning] 'mandatory' options is required"
+  exit 1
+end
+
+MQBench.run(opts.conf)
