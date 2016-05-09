@@ -2,6 +2,7 @@
 
 require 'bunny'
 require 'stomp'
+require 'kafka'
 require 'optparse'
 
 class Base
@@ -17,35 +18,31 @@ class Base
   end
 end
 
-class AMQP < Base
+class BM_AMQP < Base
   def initialize(args)
     @port = 5672
     @user = 'guest'
     @pass = 'guest'
 
     super(args)
+
+    @broker = Bunny.new(:host => @host, :port => @port, :user => @user, :pass => @pass)
+    @broker.start
   end
 
   def send_msg
-    c = Bunny.new(:host => @host, :port => @port, :user => @user, :pass => @pass)
-    c.start
-    
-    ch = c.create_channel
+    ch = @broker.create_channel
     q = ch.queue(QNAME)
   
-    (1..@count).each do |c|
+    (1..@count).each do |_|
       q.publish('a' * @size)
     end
   
     ch.close
-    c.close
   end
   
   def recv_msg
-    c = Bunny.new(:host => @host, :port => @port, :user => @user, :pass => @pass)
-    c.start
-    
-    ch = c.create_channel
+    ch = @broker.create_channel
     q = ch.queue(QNAME)
   
     cnt = 0
@@ -58,34 +55,31 @@ class AMQP < Base
     end
   
     ch.close
-    c.close
   end
 end
 
-class STOMP < Base
+class BM_STOMP < Base
   def initialize(args)
     @port = 61613
     @user = 'guest'
     @pass = 'guest'
 
     super(args)
+
+    @broker = Stomp::Connection.open(@user, @pass, @host, @port)
   end
 
   def send_msg
-    conn = Stomp::Connection.open(@user, @pass, @host, @port)
-    
-    (1..@count).each do |_x|
-      conn.publish(QNAME, 'a' * @size)
+    (1..@count).each do |x|
+      @broker.publish(QNAME, 'a' * @size)
     end
   end
 
   def recv_msg
-    conn = Stomp::Connection.open(@user, @pass, @host, @port)
-    
-    conn.subscribe(QNAME, {:ack => 'client'})
+    @broker.subscribe(QNAME, {:ack => 'client'})
     cnt = 0
     loop do
-      conn.receive
+      @broker.receive
     
       cnt += 1
       if cnt >= @count
@@ -95,12 +89,54 @@ class STOMP < Base
   end
 end
 
+class BM_Kafka < Base
+  def initialize(args)
+    @port = 9092
+
+    super(args)
+
+    @broker = Kafka.new(seed_brokers: ["#{@host}:#{@port}"])
+  end
+
+  def send_msg
+    producer = @broker.producer(:required_acks => 0,
+                              :max_buffer_size => (@count * @size),
+                              :max_buffer_bytesize => (@count * (@size + 100)))
+
+    (1..@count).each do |x|
+      producer.produce('a' * @size, topic: QNAME)
+      producer.deliver_messages
+    end
+
+    producer.shutdown
+  end
+
+  def recv_msg
+    consumer = @broker.consumer(group_id: "test")
+
+    # It's possible to subscribe to multiple topics by calling `subscribe`
+    # repeatedly.
+    consumer.subscribe(QNAME)
+
+    # This will loop indefinitely, yielding each message in turn.
+    current = 1
+    consumer.each_message do |message|
+      current += 1
+      if(current >= @count)
+        break
+      end
+    end
+  end
+end
+
 def benchmark(args)
   obj = case args[:mode]
   when 'amqp'
-    AMQP.new(args)
+    BM_AMQP.new(args)
   when 'stomp'
-    STOMP.new(args)
+    BM_STOMP.new(args)
+  when 'kafka'
+    BM_Kafka.new(args)
   else
     nil
   end
@@ -116,8 +152,7 @@ def benchmark(args)
 
     time_dequeued = Time.now
 
-    puts "time_enqueued : #{time_enqueued - time_started}"
-    puts "time_dequeued : #{time_dequeued - time_enqueued}"
+    puts "results: #{time_dequeued - time_started} (enqueue:#{time_enqueued - time_started}, dequeue:#{time_dequeued - time_enqueued})"
   end
 end
 
